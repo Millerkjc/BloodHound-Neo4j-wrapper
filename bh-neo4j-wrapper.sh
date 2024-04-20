@@ -27,6 +27,9 @@ Use a DB:
     bh-neo4j-wrapper.sh run dbname (will create one if doesn't exist)
 Remove DB:
     bh-neo4j-wrapper.sh rm dbname
+Import JSON files or ZIP:
+    bh-neo4j-wrapper.sh import <neo4j_user> <neo4j_password> /path/to/bhoutput json (will import the data to the current DB)
+    bh-neo4j-wrapper.sh import <neo4j_user> <neo4j_password> /path/to/bhoutput zip sudo (will import the data to the current DB using docker with sudo)
 
 Ex: bh-neo4j-wrapper.sh run neo4j
 
@@ -74,6 +77,63 @@ function checkRequirements() {
   if ! [ -x "$(command -v bloodhound)" ]; then
     echo "bloodhound is not installed"
     exit 1
+  fi
+}
+
+function checkDocker() {
+  # if action is import
+  if ! [ -x "$(command -v docker)" ]; then
+    echo "Docker is not installed. Please install docker to use the import feature."
+    exit 1
+  fi
+}
+
+function checkBHdata() {
+  if [[ -d "bhdata" ]]; then
+    rm -rf bhdata
+    mkdir bhdata
+  else
+    mkdir bhdata
+  fi
+}
+
+function importBHdata() {
+  echo "Import BH data using https://github.com/som3canadian/bloodhound-import"
+  checkBHdata
+  imageName="ghcr.io/som3canadian/bloodhound-import:master"
+  if [[ -z "$2" ]]; then
+    echo "Please provide the neo4j user"
+    exit 1
+  fi
+  if [[ -z "$3" ]]; then
+    echo "Please provide the neo4j password"
+    exit 1
+  fi
+  if [[ -z "$4" ]]; then
+    echo "Please provide the path to the BH output"
+    exit 1
+  fi
+  if [[ -z "$5" ]]; then
+    echo "Please provide the file extension (json or zip)"
+    exit 1
+  fi
+  if [[ "$5" != "json" && "$5" != "zip" ]]; then
+    echo "Please provide the file extension (json or zip)"
+    exit 1
+  fi
+  # copy the data to the bhdata folder
+  if [[ "$4" != $(pwd)/bhdata ]]; then
+    cp -r "$4"/*."$5" bhdata/
+  fi
+
+  if [[ "$6" == "sudo" ]]; then
+    echo "Importing data to the current DB using sudo"
+    sudo docker pull "$imageName"
+    sudo docker run -v $(pwd)/bhdata:/app/bloodhound-import/bhdata --network host -it $(sudo docker images --no-trunc | grep ghcr.io/som3canadian/bloodhound-import | cut -d ':' -f2 | cut -d " " -f1 | head -n 1) -du "$2" -dp "$3" --database "127.0.0.1" bhdata/*.$5
+  else
+    echo "Importing data to the current DB"
+    docker pull "$imageName"
+    docker run -v $(pwd)/bhdata:/app/bloodhound-import/bhdata --network host -it $(docker images --no-trunc | grep ghcr.io/som3canadian/bloodhound-import | cut -d ':' -f2 | cut -d " " -f1 | head -n 1) -du "$2" -dp "$3" --database "127.0.0.1" bhdata/*.$5
   fi
 }
 
@@ -166,6 +226,12 @@ setup)
   ;;
 help)
   showHelp
+  ;;
+import)
+  checkSudo
+  checkDocker
+  importBHdata "$@"
+  cleanFile
   ;;
 list)
   listDB
