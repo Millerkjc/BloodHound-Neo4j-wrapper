@@ -3,6 +3,7 @@
 # https://itecnote.com/tecnote/error-occurs-when-creating-a-new-database-under-neo4j-4-0/
 
 dbDataPath="/usr/share/neo4j/data/databases"
+transationPath="/usr/share/neo4j/data/transactions"
 configPath="/etc/neo4j"
 
 toolName=$(basename "$0")
@@ -144,10 +145,17 @@ function deleteDB() {
   dbName="$2"
   if [[ -d "$dbDataPath/$dbName" ]]; then
     sudo rm -rf "${dbDataPath:?}/${dbName:?}"
+    sudo rm -rf "${transationPath}/${dbName:?}"
   else
     echo "DB doesn't exist !"
   fi
   echo "[*] DB delete ! Listing current DB"
+}
+
+function cleanFile() {
+  if [[ -f "$stateFile" ]]; then
+    rm "$stateFile"
+  fi
 }
 
 case $ACTION in
@@ -161,6 +169,7 @@ help)
   ;;
 list)
   listDB
+  cleanFile
   ;;
 run)
   checkSudo
@@ -168,12 +177,14 @@ run)
   listDB
   settingDB "$@"
   restartService
+  cleanFile
   ;;
 rm)
   checkSudo
   checkNeo4j
   deleteDB "$@"
   listDB
+  cleanFile
   ;;
 *)
   showHelp
