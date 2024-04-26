@@ -1,3 +1,4 @@
 db.json
 .DS_Store
 bhdata
+neo4j_dbpath.txt

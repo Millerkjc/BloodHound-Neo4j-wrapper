@@ -2,34 +2,39 @@
 
 # https://itecnote.com/tecnote/error-occurs-when-creating-a-new-database-under-neo4j-4-0/
 
-dbDataPath="/usr/share/neo4j/data/databases"
-transationPath="/usr/share/neo4j/data/transactions"
 configPath="/etc/neo4j"
-
 toolName=$(basename "$0")
-# toolPath="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-toolPath="$(realpath "$toolName" | rev | cut -d "/" -f 2- | rev)"
 configFile="$configPath/neo4j.conf"
 configString="dbms.default_database"
-stateFile="$toolPath/db.json"
 ACTION="$1"
+
+# toolPath="$(realpath "$toolName" | rev | cut -d "/" -f 2- | rev)"
+toolPath=$(dirname "$(realpath "$(which "$toolName")")")
+stateFile="$toolPath/db.json"
+neo4jDataInfoFile="$toolPath/neo4j_dbpath.txt"
 
 function showHelp() {
     cat <<END
 
-Setup tool:
-    ./$(basename "$0") setup
 Show this menu:
     bh-neo4j-wrapper.sh help
+
+Setup tool:
+    ./$(basename "$0") setup
+
 List DB:
     bh-neo4j-wrapper.sh list
+
 Use a DB:
     bh-neo4j-wrapper.sh run dbname (will create one if doesn't exist)
+
 Remove DB:
     bh-neo4j-wrapper.sh rm dbname
+
 Import JSON files or ZIP:
     bh-neo4j-wrapper.sh import <neo4j_user> <neo4j_password> /path/to/bhoutput json (will import the data to the current DB)
     bh-neo4j-wrapper.sh import <neo4j_user> <neo4j_password> /path/to/bhoutput zip sudo (will import the data to the current DB using docker with sudo)
+
 
 Ex: bh-neo4j-wrapper.sh run neo4j
 
@@ -38,15 +43,14 @@ END
 
 function checkSudo() {
   if groups | grep "\<sudo\>" &> /dev/null; then
-   echo "User is in sudo group, we can continue" &> /dev/null
+    echo "User is in sudo group, we can continue" &> /dev/null
   else
-   echo "[x] This script must be run using a user with sudo privileges"
-   exit 1
+    echo "[x] This script must be run using a user with sudo privileges"
+    exit 1
   fi
 }
 
 function setupTool() {
-  checkSudo
   if [[ -f "/usr/local/bin/$toolName" ]]; then
     echo "Already set"
     exit 1
@@ -55,6 +59,19 @@ function setupTool() {
     sudo ln -s "$fullPath" "/usr/local/bin/$toolName"
     echo "[*] Tool is set"
   fi
+}
+
+function setupDataPath() {
+  if [[ -f "$neo4jDataInfoFile" ]]; then
+    dbPath=$(cat "$neo4jDataInfoFile" | grep data | xargs | cut -d " " -f2)
+  else
+    echo "No DB path found, will restart the service to get the path"
+    restartService
+    dbPath=$(cat "$neo4jDataInfoFile" | grep data | xargs | cut -d " " -f2)
+  fi
+  echo "DB path is: $dbPath" &> /dev/null
+  dbDataPath="$dbPath/databases"
+  transationPath="$dbPath/transactions"
 }
 
 function checkRequirements() {
@@ -150,8 +167,16 @@ function checkNeo4j() {
   fi
 }
 
+function getCurrentDB() {
+  currentDB=$(cat "$configFile" | grep "$configString" | tail -n1 | cut -d "=" -f2)
+  echo "Current DB is: $currentDB" &> /dev/null
+}
+
 function listDB() {
-  echo ""
+  echo " "
+  echo "[*] Listing current DB (the current one is highlighted)"
+  echo " "
+  getCurrentDB
   COUNTER=0
   echo "{\"databases\":[" > "$stateFile"
   for d in "$dbDataPath"/*; do
@@ -162,7 +187,12 @@ function listDB() {
       continue
     fi
     echo "\"$dataName\"," >> "$stateFile"
-    echo "[$COUNTER] $dataName"
+    # color the current DB
+    if [[ $dataName == "$currentDB" ]]; then
+      echo "[$COUNTER] $dataName" | grep --color=always "$currentDB"
+    else
+      echo "[$COUNTER] $dataName"
+    fi
     #moving to the next one
     COUNTER=$((COUNTER + 1))
   done
@@ -178,30 +208,30 @@ function settingDB() {
   else
     dbName="$2"
   fi
-  #echo "setting db"
   lastLine=$(tail -n1 "$configFile")
-  #echo "$lastLine"
   if [[ "$lastLine" =~ $configString ]]; then
     sudo sed '$d' -i "$configFile"
-    echo "$configString=$dbName" | sudo tee -a "$configFile"
+    echo "$configString=$dbName" | sudo tee -a "$configFile" &> /dev/null
   else
-    echo "$configString=$dbName" | sudo tee -a "$configFile"
+    echo "$configString=$dbName" | sudo tee -a "$configFile" &> /dev/null
   fi
 }
 
 function restartService() {
   echo ""
-  sudo neo4j start
+  sudo neo4j start | tee "$neo4jDataInfoFile"
+  # sleep 5, making sure highligting will work if new DB is created
+  sleep 5
+  #
   # echo "Waiting 10sec before launching bloodhound"
   # sleep 12
   # tmux new -d -s bloodhound 'bloodhound'
   # tmux ls
   # echo "tmux a -t bloodhound"
-  echo ""
-  echo "You can now run start bloodhound"
 }
 
 function deleteDB() {
+  echo ""
   dbName="$2"
   if [[ -d "$dbDataPath/$dbName" ]]; then
     sudo rm -rf "${dbDataPath:?}/${dbName:?}"
@@ -209,7 +239,7 @@ function deleteDB() {
   else
     echo "DB doesn't exist !"
   fi
-  echo "[*] DB delete ! Listing current DB"
+  echo "[*] DB delete !"
 }
 
 function cleanFile() {
@@ -223,6 +253,8 @@ setup)
   checkSudo
   checkRequirements
   setupTool
+  checkNeo4j
+  setupDataPath
   ;;
 help)
   showHelp
@@ -230,27 +262,31 @@ help)
 import)
   checkSudo
   checkDocker
+  setupDataPath
   importBHdata "$@"
-  cleanFile
   ;;
 list)
-  listDB
   cleanFile
+  checkSudo
+  setupDataPath
+  listDB
   ;;
 run)
   checkSudo
   checkNeo4j
-  listDB
+  setupDataPath
   settingDB "$@"
   restartService
-  cleanFile
+  listDB
+  echo ""
+  echo "You can now wait a 5-10 seconds and start bloodhound"
   ;;
 rm)
   checkSudo
   checkNeo4j
+  setupDataPath
   deleteDB "$@"
   listDB
-  cleanFile
   ;;
 *)
   showHelp
